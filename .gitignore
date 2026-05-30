@@ -1,45 +1,74 @@
-*__pycache__*
-# *allure*
-.env
-.venv
-.idea/
-allure-results/
-logs
-*.jpeg
-.dvenv
-*.png
-*.jpg
-screenshots/
-test-evidence/
-*.isorted
-pylintIssues*.txt
-.report.json
-results.json
-.pytest_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-*.pyc
+# Python
+__pycache__/
+*.py[cod]
 *.pyo
 *.pyd
-__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+.dvenv/
+venv/
+env/
+
+# Credentials and secrets — NEVER commit these
+.env
+.env.*
+!.env_sample
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.yaml
+secrets.json
+
+# Test output and reports
+reports/html/
+apps/*/reports/
+allure-results/
+test-results.xml
+report.html
+.report.json
+results.json
+*.pdf
+*.isorted
+pylintIssues*.txt
+
+# Coverage and type checking
+.coverage
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+
+# Screenshots and media
+*.png
+*.jpg
+*.jpeg
+screenshots/
+test-evidence/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
 .DS_Store
 Thumbs.db
 
-reports/html
-apps/*/reports/*
-report.html
-test-results.xml
-dist
-*.egg-info
+# Local config — machine-specific, not for version control
 local.mk
+INSTALL_NOTES.md
+
+# Runtime artifacts
 .mcp_jobs/
+logs/
 
-# IDE
-.vscode/
-
-# Generated / build artifacts
-*.pdf
-activate.ps1
-build/
+# Generated schema downloads
 framework/api-test/downloaded_schema.json
+
+# GitHub Actions build artifacts
+activate.ps1
