@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "infobeans-rai": {
+      "command": "/Users/admin/Documents/Claude/Code/RAI-MCP/.venv/bin/infobeans-rai-mcp",
+      "args": [],
+      "env": {
+        "INFOBEANS_RAI_WORKSPACE": "/Users/admin/Documents/Claude/Code/RAI-MCP"
+      }
+    }
+  }
+}

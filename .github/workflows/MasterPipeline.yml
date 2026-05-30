@@ -1,0 +1,525 @@
+# Copyright (c) 2026 InfoBeans
+# Internal Authors: InfoBeans Accelerator Team
+# All rights reserved.
+#
+# This software is proprietary and confidential.
+# Unauthorized copying, distribution, modification, or use
+# of this software, via any medium, is strictly prohibited.
+#
+# This package is intended for internal enterprise use only.
+
+name: MasterTestExecution
+on:
+  # push:
+  #   branches:
+  #     - master
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "Application to run"
+        required: true
+
+      config:
+        description: "Configuration file"
+        required: false
+
+      mode:
+        description: "Execution mode"
+        default: "parallel-with-pytest"
+        type: choice
+        options:
+          - parallel-with-pytest
+      workers:
+        description: "Number of parallel workers (optional) (If mode is parallel-with-pytest)"
+        required: false
+      split_level:
+        description: "Split level (module/test_file) (If mode is parallel-with-pytest)"
+        required: false
+        default: "module"
+      reruns:
+        description: "Number of re-run attempts"
+        required: false
+        default: "3"
+      reruns_delay:
+        description: "Re-run delay in seconds"
+        required: false
+        default: "7"
+      test_args:
+        description: 'Extra pytest arguments (optional) like -k test_login, -m smoke, -v'
+        required: false
+        default: ""
+      xray_test_args:
+        description: 'Enter Xray Test plan key or Test Execution ID (optional) in format --testplan <test_plan_key> or --execution <test_execution_id>, Also make sure the provided key should have a Jira ticket associated with it'
+        required: false
+        default: ""
+      report_type:
+        description: 'Select report type for executive PDF report'
+        required: false
+        default: "basic"
+        type: choice
+        options:
+          - detailed
+          - basic
+      report_title:
+        description: 'Enter report title for executive PDF report'
+        type: string
+        required: false
+        default: "Test Execution Summary"
+
+  workflow_run:
+    workflows: ["Static Code Analysis"]   # Name of first workflow
+    types:
+      - completed
+
+jobs:
+  run_sca_first_if_manual:
+    if: ${{ github.event_name == 'workflow_dispatch' }}   # Only run if triggered manually
+    uses: ./.github/workflows/StaticCodeAnalysis.yml   # Reuse SCA workflow
+    secrets: inherit
+
+  test-execution:
+    # Ensure SCA runs and succeeds first on manual trigger; on other triggers, proceed normally
+    name: Test Execution
+    needs: run_sca_first_if_manual
+          # Run only when:
+    # - Manual trigger and reusable SCA succeeded, OR
+    # - Triggered by workflow_run and upstream SCA concluded success.
+    # always() prevents auto-skip when 'needs' is skipped on non-manual triggers,
+    # but the inner conditions enforce the SCA quality gate in both trigger paths.
+    if: >-
+      always() &&
+      (
+        (github.event_name == 'workflow_dispatch' &&
+         needs.run_sca_first_if_manual.result == 'success') ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      repository-projects: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=${GITHUB_WORKSPACE}" >> $GITHUB_ENV
+
+      - name: Set start time
+        run: echo "JOB_START_TIME=$(date +%s)" >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install infobeans_rai-*.whl
+          python -m playwright install chromium
+          pip list
+
+      - name: Verify infobeans-rai is installed
+        run: |
+          command -v infobeans-rai || (echo "infobeans-rai not found" && exit 1)
+          infobeans-rai --help || true
+
+      - name: Check pip deps
+        run: pip list
+
+      - name: Set commit message and date as variables
+        run: |
+          echo "latestCommitMessage=$(git log -1 --pretty=format:'%s')" >> $GITHUB_ENV
+          echo "currentDateTime=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+          echo "APP_NAME=${{ github.event.inputs.app }}" >> $GITHUB_ENV
+          echo "testExecutionStartedMessageTeams=Project: ${{ github.event.inputs.app }} - Test Execution Started for RunId: <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">${{ github.run_id }}</a><br>Branch: ${{ github.ref }}<br><br>Regards,<br>InfoBeans Accelerator Team" >> $GITHUB_ENV
+          {
+            echo 'testExecutionStartedMessageSlack<<EOF'
+            echo "Project: ${{ github.event.inputs.app }} - Test Execution Started for RunId: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "Branch: ${{ github.ref }}"
+            echo
+            echo "Regards,"
+            echo "InfoBeans Accelerator Team"
+            echo 'EOF'
+          } >> $GITHUB_ENV          
+          echo "testExecutionStartedTitle=InfoBeans-RAI Notification | Project: ${{ github.event.inputs.app }} - Test Execution Started" >> $GITHUB_ENV
+
+      - name: Slack Notification - Start
+        uses: rtCamp/action-slack-notify@v2
+        continue-on-error: true
+        env:
+          SLACK_CHANNEL: general
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+          SLACK_TITLE: ${{ env.testExecutionStartedTitle }}
+          SLACK_MESSAGE: ${{ env.testExecutionStartedMessageSlack }}
+          SLACK_USERNAME: GitHub Actions
+          SLACK_FOOTER: "InfoBeans Accelerator"
+
+      - name: Microsoft Teams Message Card
+        # You may pin to the exact commit or the version.
+        # uses: simbo/msteams-message-card-action@d87ad6c3908b72f4fd94b55d937d05395c7300dc
+        uses: simbo/msteams-message-card-action@v1.4.3
+        continue-on-error: true
+        if: always()
+        with:
+        # The Microsoft Teams webhook URL to send the notification to. Obviously required.
+          webhook: ${{ secrets.WEBHOOK_URL }}
+            # The title of your card. Will be omitted by Microsoft Teams if left empty.
+          title: ${{ env.testExecutionStartedTitle }}
+            # The message content. Supports HTML up to a certain level (interpreted by Microsoft Teams). Can also be empty.
+          message: ${{ env.testExecutionStartedMessageTeams }}
+
+      - name: Execute Tests with infobeans-rai
+        id: execute_tests
+        if: always()
+        continue-on-error: true
+        env:
+          XRAY_API_BASE_URL: ${{ secrets.XRAY_API_BASE_URL || 'https://xray.cloud.getxray.app' }}
+          XRAY_CLIENT_ID: ${{ secrets.XRAY_CLIENT_ID }}
+          XRAY_CLIENT_SECRET: ${{ secrets.XRAY_CLIENT_SECRET }}
+          XRAY_PROJECT_KEY: ${{ secrets.XRAY_PROJECT_KEY }}
+          XRAY_TEST_PLAN_KEY: ${{ secrets.XRAY_TEST_PLAN_KEY || '' }}
+          XRAY_EXECUTION_SUMMARY: ${{ github.event.inputs.report_title }} ${{ env.currentDateTime }}
+          XRAY_EXECUTION_DESC: Test Execution after commit - ${{ env.latestCommitMessage }}
+
+        run: |
+          echo "➡ Running tests using infobeans-rai in CLI"
+
+          EXTRA_ARGS=""
+
+          # Forward config if present
+          if [ ! -z "${{ github.event.inputs.config }}" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --config ${{ github.event.inputs.config }}"
+          fi
+
+          # Forward workers-count if present
+          if [ ! -z "${{ github.event.inputs.workers }}" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --workers-count ${{ github.event.inputs.workers }}"
+          fi
+
+          # Forward split-level if present
+          if [ ! -z "${{ github.event.inputs.split_level }}" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --split-level ${{ github.event.inputs.split_level }}"
+          fi
+
+          # Forward reruns if present
+          if [ ! -z "${{ github.event.inputs.reruns }}" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --reruns ${{ github.event.inputs.reruns }}"
+          fi
+
+          # Forward reruns-delay if present
+          if [ ! -z "${{ github.event.inputs.reruns_delay }}" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS --reruns-delay ${{ github.event.inputs.reruns_delay }}"
+          fi
+
+          # Forward any additional pytest-style args
+          if [ ! -z "${{ github.event.inputs.test_args }}" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS ${{ github.event.inputs.test_args }}"
+          fi
+
+          # Forward XRAY args if present
+          if [ ! -z "${{ github.event.inputs.xray_test_args }}" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS ${{ github.event.inputs.xray_test_args }}"
+          fi
+
+          echo "Command: infobeans-rai run --app ${{ github.event.inputs.app }} $EXTRA_ARGS"
+
+          infobeans-rai run \
+            --app "${{ github.event.inputs.app }}" \
+            $EXTRA_ARGS || echo "TEST_FAILED=1" >> $GITHUB_ENV
+
+      - name: Set report directory
+        run: |
+          echo "REPORTS_DIR=apps/${{ github.event.inputs.app }}/reports" >> $GITHUB_ENV
+
+      - name: Extract test statistics
+        id: extract-stats
+        if: always()
+        run: |
+          REPORT_FILE="$REPORTS_DIR/pytest_report.json"
+          if [ -f "$REPORT_FILE" ]; then
+            echo "passed=$(python -c "import json; data=json.load(open('$REPORT_FILE')); print(data.get('summary', {}).get('passed', 0))")" >> $GITHUB_OUTPUT
+            echo "failed=$(python -c "import json; data=json.load(open('$REPORT_FILE')); print(data.get('summary', {}).get('failed', 0))")" >> $GITHUB_OUTPUT
+            echo "skipped=$(python -c "import json; data=json.load(open('$REPORT_FILE')); print(data.get('summary', {}).get('skipped', 0))")" >> $GITHUB_OUTPUT
+            echo "total=$(python -c "import json; data=json.load(open('$REPORT_FILE')); print(data.get('summary', {}).get('total', 0))")" >> $GITHUB_OUTPUT
+          else
+            echo "passed=0" >> $GITHUB_OUTPUT
+            echo "failed=0" >> $GITHUB_OUTPUT
+            echo "skipped=0" >> $GITHUB_OUTPUT
+            echo "total=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set timestamp
+        if: always()
+        run: |
+          echo "TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
+          echo "TIMESTAMPFORSUBJECT=$(date +'%m-%d-%Y %H:%M:%S')" >> $GITHUB_ENV
+          echo "ZipReportName=ExecutionReport_$(date +'%Y-%m-%d_%H-%M-%S').zip" >> $GITHUB_ENV
+          TOTAL_SECONDS=$(($(date +%s) - $JOB_START_TIME))
+          DURATION_FORMATTED=$(printf '%dm %ds' $((TOTAL_SECONDS/60)) $((TOTAL_SECONDS%60)))
+          echo "TOTAL_RUNTIME=$DURATION_FORMATTED" >> $GITHUB_ENV
+          echo "testExecutionCompletedMessageTeams=Project: $APP_NAME - Test Execution Completed for RunId: <a href=\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\">${{ github.run_id }}</a> on ${{ env.currentDateTime }}<br>Status: ${{ steps.execute_tests.outcome }}<br>Duration: $DURATION_FORMATTED<br>Branch: ${{ github.ref }}<br><br>Regards,<br>InfoBeans Accelerator Team" >> $GITHUB_ENV
+          {
+            echo 'testExecutionCompletedMessageSlack<<EOF'
+            echo "Project: $APP_NAME - Test Execution Completed for RunId: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} on ${{ env.currentDateTime }}"
+            echo "Status: ${{ steps.execute_tests.outcome }}"
+            echo "Duration: $DURATION_FORMATTED"
+            echo "Branch: ${{ github.ref }}"
+            echo
+            echo "Regards,"
+            echo "InfoBeans Accelerator Team"
+            echo 'EOF'
+          } >> $GITHUB_ENV
+          echo "testExecutionCompletedTitle=InfoBeans-RAI Notification | Project: ${{ github.event.inputs.app }} - Test Execution Completed" >> $GITHUB_ENV
+
+      - name: Generate pytest report
+        if: always()
+        run: |
+          REPORT_TITLE="${{ github.event.inputs.report_title }}"
+
+          if [ "${{ github.event.inputs.report_type }}" == "detailed" ]; then
+            infobeans-rai generate-report \
+              --detailed \
+              --report-title "$REPORT_TITLE" \
+              --output "infobeans-rai_test_summary.pdf" \
+              ${{ env.REPORTS_DIR }}/pytest_report.json
+            echo "Generate the executive report with detailed test statistics"
+          else
+            infobeans-rai generate-report \
+              --report-title "$REPORT_TITLE" \
+              --output "infobeans-rai_test_summary.pdf" \
+              ${{ env.REPORTS_DIR }}/pytest_report.json
+            echo "Generate the basic executive report."
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+  
+      - name: Install Allure CLI via npm
+        run: |
+          npm install -g allure-commandline
+          allure --version
+          
+      - name: Restore Allure history
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p .allure-history-branch
+          if git ls-remote --heads origin gh-pages | grep -q 'refs/heads/gh-pages'; then
+            echo "Branch gh-pages exists. Fetching history..."
+            git fetch origin gh-pages --depth=1
+            git checkout origin/gh-pages -- history || echo "History root folder not found in gh-pages branch"
+            if [ -d "history" ]; then
+              mv history .allure-history-branch/
+            fi
+          else
+            echo "Branch gh-pages does not exist yet. This must be the first run. Skipping restoration."
+          fi
+
+      - name: Generate Allure Metadata
+        if: always()
+        continue-on-error: true
+        run: |
+          ALLURE_RESULTS_DIR="$REPORTS_DIR/allure-results"
+          mkdir -p "$ALLURE_RESULTS_DIR"
+          
+          echo "Generating allure executor.json..."
+          cat <<EOF > "$ALLURE_RESULTS_DIR/executor.json"
+          {
+            "name": "GitHub Actions",
+            "type": "github",
+            "url": "https://github.com/${{ github.repository }}",
+            "buildOrder": ${{ github.run_number }},
+            "buildName": "Run #${{ github.run_id }}",
+            "buildUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "reportUrl": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "reportName": "Allure Report"
+          }
+          EOF
+
+          echo "Generating allure environment.properties..."
+          cat <<EOF > "$ALLURE_RESULTS_DIR/environment.properties"
+          App=${{ github.event.inputs.app }}
+          Config=${{ github.event.inputs.config }}
+          RunId=${{ github.run_id }}
+          Repository=${{ github.repository }}
+          Branch=${{ github.ref }}
+          Mode=${{ github.event.inputs.mode }}
+          Workers=${{ github.event.inputs.workers }}
+          SplitLevel=${{ github.event.inputs.split_level }}
+          EOF
+
+      - name: Generate Allure report with Trends
+        if: always()
+        continue-on-error: true
+        run: |
+          ALLURE_RESULTS_DIR="$REPORTS_DIR/allure-results"
+          if [ -d "$ALLURE_RESULTS_DIR" ] && [ "$(ls -A $ALLURE_RESULTS_DIR)" ]; then
+            echo "Allure results found. Handling trends..."
+            
+            # Restore previous history for THIS app if it exists
+            APP_HISTORY=".allure-history-branch/history/${{ github.event.inputs.app }}"
+            if [ -d "$APP_HISTORY" ]; then
+              echo "Restoring app-specific Allure history for Trends from $APP_HISTORY..."
+              cp -rp "$APP_HISTORY" "$ALLURE_RESULTS_DIR/history"
+            fi
+            
+            echo "Generating Allure report..."
+            allure generate "$ALLURE_RESULTS_DIR" --clean -o allure-report
+            
+            # Update history folder for THIS app (to be published)
+            if [ -d "allure-report/history" ]; then
+              echo "Updating Allure history folder for ${{ github.event.inputs.app }}..."
+              mkdir -p "$APP_HISTORY"
+              cp -rp allure-report/history/* "$APP_HISTORY/"
+            else
+              echo "Warning: allure-report/history not found after generation."
+            fi
+          else
+            echo "Allure report not enabled or allure-results directory not present. Skipping."
+          fi
+
+      - name: Deploy Allure history
+        uses: peaceiris/actions-gh-pages@v3
+        if: always()
+        continue-on-error: true
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .allure-history-branch
+          publish_branch: gh-pages
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: "Update Allure history: Run ${{ github.run_id }}"
+  
+      - name: Generate single Allure HTML file
+        if: always()
+        run: |
+          if [ -d "allure-report" ] && [ -f "allure-report/index.html" ]; then
+            echo "Combining Allure report into single HTML file"
+            pip install allure-combine
+            allure-combine ./allure-report
+          else
+            echo "Allure report not generated. Skipping combine step."
+          fi
+  
+      - name: Upload Allure single HTML report
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-report-single-file
+          path: allure-report/complete.html
+
+      - name: Upload PDF Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infobeans_rai_execution_report
+          path: infobeans-rai_test_summary.pdf
+
+      - name: Upload test results to GitHub
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            ${{ env.REPORTS_DIR }}/test-results.xml
+            ${{ env.REPORTS_DIR }}/pytest_report.json
+            ${{ env.REPORTS_DIR }}/report*.html
+          retention-days: 30
+
+      - name: Upload Allure Results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: allure-results
+          path: ${{ env.REPORTS_DIR }}/allure-results
+ 
+
+      - name: Prepare email HTML body
+        id: prepare-email
+        if: always()
+        run: |
+          # Export environment variables for the script
+          export TEST_RESULT="${{ env.TEST_FAILED == '1' && 'FAILED' || 'PASSED' }}"
+          export TOTAL_TESTS="${{ steps.extract-stats.outputs.total }}"
+          export PASSED_TESTS="${{ steps.extract-stats.outputs.passed }}"
+          export FAILED_TESTS="${{ steps.extract-stats.outputs.failed }}"
+          export SKIPPED_TESTS="${{ steps.extract-stats.outputs.skipped }}"
+          
+          # Run the script to prepare the email body
+          infobeans-rai prepare-email --template-path .github/templates/email-template.html
+          
+          DELIM="__EMAIL_BODY_EOF__"
+          {
+            echo "email_body<<$DELIM"
+            cat .github/templates/email-body.html
+            echo
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate test artifacts
+        if: always()
+        run: |
+          # Create a zip file with test results
+          zip -r "${{ env.ZipReportName }}" \
+          "$REPORTS_DIR/pytest_report.json" \
+          "$REPORTS_DIR/test-results.xml" \
+          "$REPORTS_DIR"/report*.html || true
+
+
+      - name: Send email notification
+        if: always()
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v6
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "InfoBeans RAI Test Execution updates for app ${{ env.APP_NAME }}: ${{ env.TEST_FAILED == '1' && 'FAILED' || 'PASSED' }} at ${{ env.TIMESTAMPFORSUBJECT }}"
+
+          to: ${{ secrets.NOTIFICATION_EMAIL }}
+          from: "InfoBeans Accelerator Team <${{ secrets.GMAIL_USERNAME }}>"
+          html_body: ${{ steps.prepare-email.outputs.email_body }}
+          attachments: "${{ env.ZipReportName }},infobeans-rai_test_summary.pdf,allure-report/complete.html"
+
+      - name: Slack Summary - Post execution
+        if: always()
+        continue-on-error: true
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_CHANNEL: general
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+          SLACK_TITLE: ${{ env.testExecutionCompletedTitle }}
+          SLACK_MESSAGE: ${{ env.testExecutionCompletedMessageSlack }}
+          SLACK_USERNAME: GitHub Actions
+          SLACK_FOOTER: "InfoBeanseans Accelerator"
+
+      - name: Microsoft Teams Summary - Post execution
+        if: always()
+        continue-on-error: true
+        uses: simbo/msteams-message-card-action@v1.4.3
+        with:
+          webhook: ${{ secrets.WEBHOOK_URL }}
+          title: ${{ env.testExecutionCompletedTitle }}
+          message: ${{ env.testExecutionCompletedMessageTeams }}

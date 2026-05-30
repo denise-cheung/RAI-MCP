@@ -1,0 +1,44 @@
+# Copyright (c) 2026 InfoBeans
+# Internal Authors: InfoBeans Accelerator Team
+# All rights reserved.
+#
+# This software is proprietary and confidential.
+# Unauthorized copying, distribution, modification, or use
+# of this software, via any medium, is strictly prohibited.
+#
+# This package is intended for internal enterprise use only.
+
+# Browser settings
+browser: chromium
+headless: true
+
+custom_parallel_run:
+  enabled: false
+  batches:
+    batch1:
+        workers: "2"
+        dist_scope: "loadfile"
+        testfiles:
+          - "apps/demo/tests/test_sample.py::test_sample"
+
+reporting:
+  # Enable and configure reporting plugins.
+  # Plugin-specific configurations should be in separate config files
+  # under apps/demo/configs/plugins/<PluginName>/config.yml
+  # or provided via environment variables as configured in those plugin config files.
+  - name: HtmlReportPlugin
+    enabled: false
+    # config: {} # No inline config needed
+  - name: AllurePlugin
+    enabled: true
+    config: {
+      allure_dir: "allure-results"
+    }
+  - name: XrayPlugin
+    enabled: false
+    config: {
+      XRAY_CLIENT_ID: "${XRAY_CLIENT_ID}",
+      XRAY_CLIENT_SECRET: "${XRAY_CLIENT_SECRET}",
+      XRAY_API_BASE_URL: "${XRAY_API_BASE_URL}",
+      XRAY_PROJECT_KEY: "${XRAY_PROJECT_KEY}",
+    }

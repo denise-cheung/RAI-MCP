@@ -1,0 +1,129 @@
+# Copyright (c) 2026 InfoBeans
+# Internal Authors: InfoBeans Accelerator Team
+# All rights reserved.
+#
+# This software is proprietary and confidential.
+# Unauthorized copying, distribution, modification, or use
+# of this software, via any medium, is strictly prohibited.
+#
+# This package is intended for internal enterprise use only.
+
+name: Static Code Analysis
+
+on:
+  # pull_request:
+  # push:
+  #   branches:
+  #     - master
+  workflow_dispatch:
+  workflow_call:   # This makes it reusable in other workflows
+
+jobs:
+  static-analysis:
+    name: Static Code Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install infobeans_rai-*.whl
+          pip install -r requirements-sca-pipeline.txt
+
+      # --- Black ---
+      - name: Black (code formatting check)
+        if: always()
+        run: |
+          black apps --check --verbose --config static_code_analysis.toml 2>&1 | tee black-report.log
+
+      # --- Isort ---
+      - name: Isort (import sorting check)
+        if: always()
+        run: |
+          isort apps --check-only --settings-path static_code_analysis.toml --diff --verbose | tee isort-report.log
+
+      # --- Pylint ---
+      - name: Pylint (strict linting)
+        if: always()
+        run: |
+          pylint apps --rcfile=static_code_analysis.toml --reports=y | tee pylint-report.log
+
+      # --- Mypy ---
+      - name: Mypy (type checking)
+        if: always()
+        run: |
+          mypy apps --config-file=static_code_analysis.toml | tee mypy-report.log
+
+      # --- Bandit ---
+      - name: Bandit (security scan)
+        if: always()
+        run: |
+          bandit -c static_code_analysis.toml -r apps -f txt -v -lll -iii | tee bandit-report.log
+
+      # --- Pytest Collect ---
+      - name: Pytest collect (import sanity check)
+        if: always()
+        run: |
+          pytest --collect-only -q | tee pytest-collect.log
+
+      # --- Final Bundle ---
+      - name: Upload All SCA Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: |
+            black-report.log
+            isort-report.log
+            pylint-report.log
+            mypy-report.log
+            bandit-report.log
+            pytest-collect.log
+
+  depcheck_test:
+    name: Dependency Check (Python)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Dependency-Check scan
+        uses: dependency-check/Dependency-Check_Action@main
+        id: depcheck
+        with:
+          project: 'PythonProject'
+          path: '.'
+          format: 'HTML'
+          out: 'dependency-check'
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+            --scan requirements.txt
+
+      - name: Upload Dependency-Check report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: dependency-check/dependency-check-report.html

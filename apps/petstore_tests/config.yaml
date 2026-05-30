@@ -1,0 +1,26 @@
+# Demo runner config for generated Petstore API tests
+browser: chromium
+headless: true
+
+custom_parallel_run:
+  enabled: false
+  batches:
+    batch1:
+      workers: "1"
+      dist_scope: "loadfile"
+      testfiles:
+        - "apps/petstore_tests/test_api_get.py"
+        - "apps/petstore_tests/test_api_post.py"
+        - "apps/petstore_tests/test_api_put.py"
+        - "apps/petstore_tests/test_api_patch.py"
+        - "apps/petstore_tests/test_api_delete.py"
+
+reporting:
+  - name: HtmlReportPlugin
+    enabled: false
+  - name: AllurePlugin
+    enabled: true
+    config:
+      allure_dir: "allure-results"
+  - name: XrayPlugin
+    enabled: false

@@ -1,0 +1,45 @@
+*__pycache__*
+# *allure*
+.env
+.venv
+.idea/
+allure-results/
+logs
+*.jpeg
+.dvenv
+*.png
+*.jpg
+screenshots/
+test-evidence/
+*.isorted
+pylintIssues*.txt
+.report.json
+results.json
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+.DS_Store
+Thumbs.db
+
+reports/html
+apps/*/reports/*
+report.html
+test-results.xml
+dist
+*.egg-info
+local.mk
+.mcp_jobs/
+
+# IDE
+.vscode/
+
+# Generated / build artifacts
+*.pdf
+activate.ps1
+build/
+framework/api-test/downloaded_schema.json
